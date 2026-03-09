@@ -36,7 +36,7 @@ class Pavements(Dataset):
         return output
 
     def classify(self, image):
-        output = np.zeros_like(image, dtype=np.int)
+        output = np.zeros_like(image, dtype=np.int64)
 
         # Threshold pixels such that (<= threshold is pavement surface) & (> threshold is pavement crack)
         output[image <= self.pixel_value_threshold] = 0
@@ -52,8 +52,14 @@ class Pavements(Dataset):
     def __getitem__(self, idx):
 
         img_name = self.list_img[idx]
+        # 原始图像路径
         img_raw_dir = os.path.join(self.raw_dir, img_name)
-        img_lbl_dir = os.path.join(self.lbl_dir, img_name)
+        # 标签图像路径
+        name_without_ext = os.path.splitext(img_name)[0]  # 001
+        label_name = f"{name_without_ext}_mask.png"       # 001_mask.png
+        # img_lbl_dir = os.path.join(self.lbl_dir, img_name)
+        img_lbl_dir = os.path.join(self.lbl_dir, label_name)
+
         image_raw = io.imread(img_raw_dir)
         image_label = io.imread(img_lbl_dir)
         label = self.classify(image_label)
