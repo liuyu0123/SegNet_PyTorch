@@ -11,6 +11,12 @@ import numpy as np
 import json
 
 def save_checkpoint(state, path):
+    # 自动创建父目录（如果不存在）
+    directory = os.path.dirname(path)
+    if directory and not os.path.exists(directory):
+        os.makedirs(directory, exist_ok=True)
+        print("Created directory: {}".format(directory))
+
     torch.save(state, path)
     print("Checkpoint saved at {}".format(path))
 
