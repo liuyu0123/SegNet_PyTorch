@@ -57,6 +57,10 @@ def load(model, weight_fn):
 
 
 def main(args):
+    # 自动创建结果目录
+    if not os.path.exists(args.res_dir):
+        os.makedirs(args.res_dir, exist_ok=True)
+        print("Created results directory: {}".format(args.res_dir))
 
     cuda_available = torch.cuda.is_available()
     model_json = load_model_json()
@@ -86,6 +90,8 @@ def main(args):
 
     # build color map
     color_map = build_color_map()
+    if cuda_available:
+        color_map = color_map.cuda()  # 移到 GPU
 
     # init metrics aggregation
     num_images = 0
