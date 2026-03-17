@@ -17,6 +17,14 @@ python Train_SegNet_Pavements.py \
     ./logs \
     --weight-fn weights/water_seg.pth.tar
 
+#训练模型（指定train和val路径）
+python Train_SegNet_Pavements_with_val.py `
+    --images D:\Files\Data\IRWSB\train\images `
+    --masks D:\Files\Data\IRWSB\train\masks_white `
+    --val-images D:\Files\Data\IRWSB\val\images `
+    --val-masks D:\Files\Data\IRWSB\val\masks_white `
+    --logs logs/tensorboard  > logs/train_test1.log 2>&1
+
 #测试模型
 #Powershell 格式
 # 先 cd 到 WaterSegment 文件夹
