@@ -18,7 +18,7 @@ python Train_SegNet_Pavements.py \
     --weight-fn weights/water_seg.pth.tar
 
 #训练模型（指定train和val路径）
-python Train_SegNet_Pavements_with_val.py `
+python train_water.py `
     --images D:\Files\Data\IRWSB\train\images `
     --masks D:\Files\Data\IRWSB\train\masks_white `
     --val-images D:\Files\Data\IRWSB\val\images `
