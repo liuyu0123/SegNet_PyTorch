@@ -25,7 +25,21 @@ python train_water.py `
     --val-masks D:\Files\Data\IRWSB\val\masks_white `
     --logs logs/tensorboard  > logs/train_test1.log 2>&1
 
-#测试模型
+#测试模型（测试集评估性能）
+# 基础测试
+python test_water.py `
+    --model .\weights\checkpoint_pavements_20260309_111733.pth.tar `
+    --images D:\Files\Data\IRWSB\test\images `
+    --masks D:\Files\Data\IRWSB\test\masks_white
+
+# 指定输出路径
+python test_water.py `
+    --model .\weights\checkpoint_pavements_20260309_111733.pth.tar `
+    --images D:\Files\Data\IRWSB\test\images `
+    --masks D:\Files\Data\IRWSB\test\masks_white `
+    --output results/segnet_test.csv
+
+#测试模型(保存推理结果)
 #Powershell 格式
 # 先 cd 到 WaterSegment 文件夹
 python Test_SegNet_Pavements.py `
