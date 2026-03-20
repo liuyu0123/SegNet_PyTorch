@@ -4,3 +4,4 @@ weights/
 .DS_Store
 *result*
 *output*
+checkpoints
