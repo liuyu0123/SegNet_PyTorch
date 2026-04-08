@@ -90,21 +90,20 @@ python Test_SegNet_Pavements_best.py `
 
 
 # 模型推理，保存推理结果为红色蒙版风格，并且根据mask真值计算评价指标
-# 1. 单张图片推理 + 保存叠加图
-python Test_SegNet_Pavements_best_pro.py "D:\Data\test\img_001.jpg" "checkpoints\best.pth" --output ".\results"
-
-# 2. 批量推理文件夹内所有图片 + 保存叠加图 + 计算指标并保存CSV
+# 基础推理（仅生成叠加图）
 python Test_SegNet_Pavements_best_pro.py `
-    "D:\Files\Data\IRWSB\analyse\images" `
-    "F:\AAA\2_segnet_best\experiment1\exp_bs_6_last.pth" `
+    --input "D:\Files\Data\IRWSB\analyse\images" `
+    --weights "F:\AAA\2_segnet_best\experiment1\exp_bs_6_last.pth" `
+    --output "D:\Files\GitProject\SegNet_PyTorch-LY\WaterSegment\results_best_pro" `
+    --alpha 0.5
+
+# 完整评测（带指标计算）
+python Test_SegNet_Pavements_best_pro.py `
+    --input "D:\Files\Data\IRWSB\analyse\images" `
+    --weights "F:\AAA\2_segnet_best\experiment1\exp_bs_6_last.pth" `
     --output "D:\Files\GitProject\SegNet_PyTorch-LY\WaterSegment\results_best_pro" `
     --ground_truth "D:\Files\Data\IRWSB\analyse\masks_white_noSuffix" `
     --alpha 0.5
 
-# 3. 仅计算指标不保存图片（不指定--output）
-python Test_SegNet_Pavements_best_pro.py "D:\Data\test\images" "checkpoints\best.pth" `
-    --ground_truth "D:\Data\test\masks"
-
-# 4. 调整透明度
-python Test_SegNet_Pavements_best_pro.py "input.jpg" "model.pth" -o "output" --alpha 0.3
-
+# 单张图片
+python Test_SegNet_Pavements_best_pro.py -i "image.jpg" -w "model.pth" -o "results" -a 0.3

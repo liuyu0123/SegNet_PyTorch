@@ -23,7 +23,7 @@ def get_image_paths(path):
         raise ValueError(f"输入路径无效: {path}")
 
 def find_ground_truth(img_name, gt_dir):
-    """智能查找真值文件（支持后缀不匹配，如原图.jpg对应mask.png）"""
+    """智能查找真值文件（支持后缀不匹配）"""
     base_name = os.path.splitext(img_name)[0]
     exts = ['.png', '.jpg', '.jpeg', '.bmp', '.tif', '.tiff', '']
     
@@ -50,20 +50,31 @@ def load_model(weight_fn, model_json, cuda):
     return model
 
 def save_overlay_result(pil_img, pred_mask, save_path, alpha=0.4):
-    """保存红色透明叠加图（水为红色）"""
+    """
+    保存红色透明叠加图（水为红色，背景保持原图不变暗）
+    pred_mask: 二值数组 (H, W)，1表示水，0表示背景
+    """
     img_array = np.array(pil_img).astype(np.float32)
     
-    # 红色蒙版 (255, 0, 0)
+    # 创建红色叠加层
     red_overlay = np.zeros_like(img_array)
-    red_overlay[pred_mask == 1] = [255, 0, 0]
+    red_overlay[pred_mask == 1] = [255, 0, 0]  # 水体区域设为红色
     
-    # Alpha 混合
-    blended = img_array * (1 - alpha) + red_overlay * alpha
-    blended = np.clip(blended, 0, 255).astype(np.uint8)
+    # 关键修改：只在mask==1的区域进行alpha混合，背景(img_array)保持不变
+    # result = img_array * mask_weight + red_overlay * (1 - mask_weight)
+    # 其中 mask_weight = 1 在背景区（不变），mask_weight = (1-alpha) 在水体区（混合）
+    mask_3ch = np.stack([pred_mask] * 3, axis=-1)  # (H,W,3)
     
-    result = Image.fromarray(blended)
-    result.save(save_path)
-    print(f"  ✓ 已保存叠加图: {os.path.basename(save_path)}")
+    # 背景权重：mask=0时为1（完全原图），mask=1时为(1-alpha)（混合）
+    bg_weight = 1 - (mask_3ch * alpha)
+    # 红色权重：mask=0时为0（无红色），mask=1时为alpha（有红色）
+    red_weight = mask_3ch * alpha
+    
+    result = img_array * bg_weight + red_overlay * red_weight
+    result = np.clip(result, 0, 255).astype(np.uint8)
+    
+    Image.fromarray(result).save(save_path)
+    print(f"  ✓ 已保存: {os.path.basename(save_path)}")
 
 def compute_metrics(pred_mask, gt_mask):
     """计算分割指标"""
@@ -125,24 +136,23 @@ def save_csv(metrics_list, save_path):
     print(f"\n✓ 指标已保存至: {save_path}")
 
 def main():
-    parser = argparse.ArgumentParser(description='SegNet 水体分割推理工具（修复版）')
-    parser.add_argument('input', type=str, help='输入图片路径或文件夹路径')
-    parser.add_argument('weight_fn', type=str, help='模型权重文件路径 (.pth)')
-    parser.add_argument('--output', '-o', type=str, default=None, 
-                       help='输出文件夹路径（保存红色叠加图）')
+    parser = argparse.ArgumentParser(description='SegNet 水体分割推理工具（全参数版）')
+    
+    # 所有参数均为 --param_name 形式
+    parser.add_argument('--input', '-i', type=str, required=True,
+                       help='输入图片路径或文件夹路径（必需）')
+    parser.add_argument('--weights', '-w', type=str, required=True,
+                       help='模型权重文件路径 .pth（必需）')
+    parser.add_argument('--output', '-o', type=str, default=None,
+                       help='输出文件夹路径（保存红色叠加图，可选）')
     parser.add_argument('--ground_truth', '-g', type=str, default=None,
                        help='真值标签文件夹路径（可选，用于计算指标）')
-    parser.add_argument('--alpha', type=float, default=0.4, help='红色蒙版透明度 (0.0-1.0)')
-    # 保留no_normalize选项以防万一，但默认与best版本一致（通常best版本没有Normalize）
-    parser.add_argument('--no_normalize', action='store_true', default=True,
-                       help='禁用Normalize（默认开启，与原始best版本一致）')
+    parser.add_argument('--alpha', '-a', type=float, default=0.4,
+                       help='红色蒙版透明度 (0.0-1.0)，默认0.4，建议0.3-0.5')
     parser.add_argument('--use_normalize', action='store_true',
-                       help='使用ImageNet Normalize（如果你的训练使用了Normalize）')
+                       help='使用ImageNet Normalize（如果训练时使用了Normalize）')
     
     args = parser.parse_args()
-    
-    # 处理参数逻辑：如果用户没有明确指定--use_normalize，则默认不normalize（与best一致）
-    use_normalize = args.use_normalize and not args.no_normalize
     
     # 获取待处理图片
     try:
@@ -152,6 +162,7 @@ def main():
         print(f"错误: {e}")
         return
     
+    # 创建输出目录
     if args.output:
         os.makedirs(args.output, exist_ok=True)
         print(f"输出目录: {args.output}\n")
@@ -165,24 +176,21 @@ def main():
         return
     
     cuda = torch.cuda.is_available()
-    model = load_model(args.weight_fn, model_json, cuda)
+    model = load_model(args.weights, model_json, cuda)
     
-    # ========================================
-    # 关键修复：预处理与原始best版本对齐
-    # best版本通过Pavements类内部完成这些步骤
-    # ========================================
+    # 预处理流程（与训练时对齐）
     transform_list = [
-        transforms.Resize((320, 640)),  # (H, W) - SegNet标准输入尺寸，必须与训练时一致！
-        transforms.ToTensor(),          # 转为0-1范围
+        transforms.Resize((320, 640)),  # (H, W) - SegNet标准尺寸
+        transforms.ToTensor(),
     ]
     
-    if use_normalize:
+    if args.use_normalize:
         transform_list.append(
             transforms.Normalize(mean=[0.485, 0.456, 0.406], std=[0.229, 0.224, 0.225])
         )
-        print("使用预处理: Resize(320,640) + ToTensor + ImageNet Normalize")
+        print("使用预处理: Resize(320,640) + ToTensor + Normalize")
     else:
-        print("使用预处理: Resize(320,640) + ToTensor（与原始best版本一致）")
+        print("使用预处理: Resize(320,640) + ToTensor")
     
     transform = transforms.Compose(transform_list)
     
@@ -192,13 +200,11 @@ def main():
     for img_path in input_paths:
         img_name = os.path.basename(img_path)
         
-        # 加载图片
         try:
-            # 保留原始PIL对象用于保存叠加图（在resize之前保存原始尺寸）
+            # 保留原始PIL用于保存（未resize版本）
             pil_img_original = Image.open(img_path).convert('RGB')
-            # 用于推理的tensor（经过resize）
+            # 用于推理的tensor（已resize）
             img_tensor = transform(pil_img_original)
-                
         except Exception as e:
             print(f"跳过 {img_name}: 无法读取 ({e})")
             continue
@@ -211,20 +217,17 @@ def main():
             output = model(img_tensor.unsqueeze(0))
             pred = torch.argmax(output, dim=1).squeeze(0).cpu().numpy()  # (320, 640)
         
-        # ========================================
-        # 关键修复：将预测mask resize回原始图片尺寸用于可视化
-        # 这样叠加图不会变形
-        # ========================================
+        # 将预测mask resize回原始尺寸用于可视化（保持原图比例）
         pred_pil = Image.fromarray((pred * 255).astype(np.uint8))
         pred_pil_resized = pred_pil.resize(pil_img_original.size, Image.NEAREST)
         pred_original_size = (np.array(pred_pil_resized) > 127).astype(np.uint8)
         
-        # 保存叠加图（使用原始尺寸的图片和mask，避免变形）
+        # 保存叠加图（背景不变暗，仅水体变红）
         if args.output:
             save_path = os.path.join(args.output, img_name)
             save_overlay_result(pil_img_original, pred_original_size, save_path, args.alpha)
         
-        # 处理真值和指标（使用原始best版本的逻辑，在模型输出尺寸上计算）
+        # 处理真值和指标（在模型输出尺寸320x640上计算）
         if args.ground_truth:
             gt_path = find_ground_truth(img_name, args.ground_truth)
             
@@ -234,8 +237,7 @@ def main():
                     gt_array = np.array(gt_img)
                     gt_mask = (gt_array > 127).astype(np.uint8)
                     
-                    # 尺寸对齐：将真值resize到模型预测尺寸(320,640)进行计算
-                    # 这与best版本通过DataLoader自动完成的逻辑一致
+                    # 尺寸对齐到模型输出尺寸
                     if gt_mask.shape != pred.shape:
                         gt_mask_pil = Image.fromarray((gt_mask * 255).astype(np.uint8))
                         gt_mask_resized = gt_mask_pil.resize((pred.shape[1], pred.shape[0]), Image.NEAREST)
@@ -250,7 +252,7 @@ def main():
             else:
                 print(f"  警告: 未找到真值文件 (尝试: {os.path.splitext(img_name)[0]}.*)")
     
-    # 输出指标
+    # 输出指标结果
     if args.ground_truth and metrics_list:
         print_metrics_table(metrics_list)
         if args.output:
