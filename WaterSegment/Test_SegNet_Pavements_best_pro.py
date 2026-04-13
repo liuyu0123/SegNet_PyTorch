@@ -1,5 +1,6 @@
 import SegNet
 import os
+import time
 import argparse
 import json
 import numpy as np
@@ -96,43 +97,49 @@ def compute_metrics(pred_mask, gt_mask):
 
 def print_metrics_table(metrics_list):
     """终端打印指标表格"""
-    print("\n" + "="*80)
+    print("\n" + "="*110)
     print("分割性能评估结果")
-    print("-"*80)
-    print(f"{'文件名':<30} {'Precision':<10} {'Recall':<10} {'F1-Score':<10} {'mIoU':<10}")
-    print("-"*80)
-    
+    print("-"*110)
+    print(f"{'文件名':<30} {'Precision':<10} {'Recall':<10} {'F1-Score':<10} {'mIoU':<10} "
+          f"{'Time(s)':<10} {'FPS':<10}")
+    print("-"*110)
+
     for m in metrics_list:
         print(f"{m['image']:<30} {m['precision']:<10.4f} {m['recall']:<10.4f} "
-              f"{m['f1']:<10.4f} {m['miou']:<10.4f}")
-    
+              f"{m['f1']:<10.4f} {m['miou']:<10.4f} {m['inference_time']:<10.4f} {m['fps']:<10.2f}")
+
     avg_p = np.mean([m['precision'] for m in metrics_list])
     avg_r = np.mean([m['recall'] for m in metrics_list])
     avg_f1 = np.mean([m['f1'] for m in metrics_list])
     avg_iou = np.mean([m['miou'] for m in metrics_list])
-    
-    print("-"*80)
-    print(f"{'[整体平均]':<30} {avg_p:<10.4f} {avg_r:<10.4f} {avg_f1:<10.4f} {avg_iou:<10.4f}")
-    print("="*80)
+    avg_time = np.mean([m['inference_time'] for m in metrics_list])
+    avg_fps = np.mean([m['fps'] for m in metrics_list])
+
+    print("-"*110)
+    print(f"{'[整体平均]':<30} {avg_p:<10.4f} {avg_r:<10.4f} {avg_f1:<10.4f} {avg_iou:<10.4f} "
+          f"{avg_time:<10.4f} {avg_fps:<10.2f}")
+    print("="*110)
 
 def save_csv(metrics_list, save_path):
     """保存CSV文件"""
     if not metrics_list:
         return
-    
+
     avg_metrics = {
         'image': 'AVERAGE',
         'precision': np.mean([m['precision'] for m in metrics_list]),
         'recall': np.mean([m['recall'] for m in metrics_list]),
         'f1': np.mean([m['f1'] for m in metrics_list]),
-        'miou': np.mean([m['miou'] for m in metrics_list])
+        'miou': np.mean([m['miou'] for m in metrics_list]),
+        'inference_time': np.mean([m['inference_time'] for m in metrics_list]),
+        'fps': np.mean([m['fps'] for m in metrics_list])
     }
-    
+
     with open(save_path, 'w', newline='', encoding='utf-8') as f:
-        writer = csv.DictWriter(f, fieldnames=['image', 'precision', 'recall', 'f1', 'miou'])
+        writer = csv.DictWriter(f, fieldnames=['image', 'precision', 'recall', 'f1', 'miou', 'inference_time', 'fps'])
         writer.writeheader()
         writer.writerows(metrics_list + [avg_metrics])
-    
+
     print(f"\n✓ 指标已保存至: {save_path}")
 
 def main():
@@ -193,9 +200,19 @@ def main():
         print("使用预处理: Resize(320,640) + ToTensor")
     
     transform = transforms.Compose(transform_list)
-    
+
+    # Warm-up：避免第一张图计时受 CUDA 初始化影响
+    print("正在进行 GPU Warm-up...")
+    dummy_input = torch.zeros(1, 3, 320, 640)
+    if cuda:
+        dummy_input = dummy_input.cuda()
+    with torch.no_grad():
+        _ = model(dummy_input)
+        if cuda:
+            torch.cuda.synchronize()
+
     metrics_list = []
-    
+
     # 批量推理
     for img_path in input_paths:
         img_name = os.path.basename(img_path)
@@ -212,10 +229,17 @@ def main():
         if cuda:
             img_tensor = img_tensor.cuda()
         
-        # 推理
+        # 推理（计时）
+        if cuda:
+            torch.cuda.synchronize()
+        start = time.time()
         with torch.no_grad():
             output = model(img_tensor.unsqueeze(0))
+            if cuda:
+                torch.cuda.synchronize()
             pred = torch.argmax(output, dim=1).squeeze(0).cpu().numpy()  # (320, 640)
+        inference_time = time.time() - start
+        fps = 1.0 / inference_time if inference_time > 0 else 0.0
         
         # 将预测mask resize回原始尺寸用于可视化（保持原图比例）
         pred_pil = Image.fromarray((pred * 255).astype(np.uint8))
@@ -245,6 +269,8 @@ def main():
                     
                     metrics = compute_metrics(pred, gt_mask)
                     metrics['image'] = img_name
+                    metrics['inference_time'] = inference_time
+                    metrics['fps'] = fps
                     metrics_list.append(metrics)
                         
                 except Exception as e:
